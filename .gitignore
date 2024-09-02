@@ -1,0 +1,5 @@
+VE_scrape/
+.env
+output/
+__pycache__/
+chromedriver-win64/

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+import stat
 from selenium.webdriver.common.by import By
 import os
 import requests
@@ -53,7 +54,13 @@ def download_chromedriver():
         zip_ref.extractall()
 
     os.remove(zip_path)
-    return "./chromedriver" if system != 'Windows' else "./chromedriver.exe"
+    
+    chromedriver_path = "./chromedriver" if system != 'Windows' else "./chromedriver.exe"
+    
+    # Make the chromedriver executable
+    os.chmod(chromedriver_path, stat.S_IRWXU)
+
+    return chromedriver_path
 
 def setup_selenium():
     options = Options()

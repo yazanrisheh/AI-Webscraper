@@ -69,11 +69,12 @@ def setup_selenium():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--headless")  # Run Chrome in headless mode
     options.add_argument("--no-sandbox")
+    
+    # Specify the path to the Chromium binary
+    options.binary_location = "/usr/bin/chromium"  # Update this path if necessary
 
-    # Download ChromeDriver at runtime
-    chromedriver_path = download_chromedriver()
-
-    service = Service(chromedriver_path)
+    # Set up ChromeDriver
+    service = Service("/usr/local/bin/chromedriver")  # Update this path if necessary
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 

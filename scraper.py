@@ -1,13 +1,11 @@
 import os
 import time
-import re
 import json
-from datetime import datetime
-from typing import List, Dict, Type
+from typing import List, Type
 
 import pandas as pd
 from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, create_model
 import html2text
 import tiktoken
 
@@ -15,66 +13,24 @@ from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-import stat
-from selenium.webdriver.common.by import By
-import os
-import requests
-import zipfile
-import platform
-
 
 from openai import OpenAI
 
 load_dotenv()
 
-# Set up the Chrome WebDriver options
-
-
-def download_chromedriver():
-    # Detect platform
-    system = platform.system()
-    if system == 'Linux':
-        url = "https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip"
-    elif system == 'Darwin':
-        url = "https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_mac64.zip"
-    elif system == 'Windows':
-        url = "https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_win32.zip"
-    else:
-        raise Exception(f"Unsupported system: {system}")
-
-    # Download ChromeDriver
-    response = requests.get(url, stream=True)
-    zip_path = "chromedriver.zip"
-    with open(zip_path, "wb") as file:
-        for chunk in response.iter_content(chunk_size=128):
-            file.write(chunk)
-
-    # Unzip ChromeDriver
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall()
-
-    os.remove(zip_path)
-    
-    chromedriver_path = "./chromedriver" if system != 'Windows' else "./chromedriver.exe"
-    
-    # Make the chromedriver executable
-    os.chmod(chromedriver_path, stat.S_IRWXU)
-
-    return chromedriver_path
 
 def setup_selenium():
+    #options instance
     options = Options()
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--headless")  # Run Chrome in headless mode
-    options.add_argument("--no-sandbox")
-    
-    # Specify the path to the Chromium binary
-    options.binary_location = "/usr/bin/chromium"  # Update this path if necessary
 
-    # Set up ChromeDriver
-    service = Service("/usr/local/bin/chromedriver")  # Update this path if necessary
+
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    # Randomize user-agent to mimic different users 
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+    # Path to the Chromedriver in your pc
+    service = Service(r"./chromedriver-win64/chromedriver.exe")  
+
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
@@ -82,24 +38,27 @@ def setup_selenium():
 def fetch_html_selenium(url):
     driver = setup_selenium()
     try:
+        #Opens the url
         driver.get(url)
-        
+
         # Add random delays to mimic human behavior
-        time.sleep(5)  # Adjust this to simulate time for user to read or interact
-        
-        # Add more realistic actions like scrolling
+        time.sleep(5)
+
+        # Adds more realistic actions like scrolling
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3)  # Simulate time taken to scroll and read
-        
+
         html = driver.page_source
         return html
+    #Closes Chrome in case it crashes and not leave it open
     finally:
+        #driver.close()
         driver.quit()
 
 def clean_html(html_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, features = 'html.parser')
     
-    # Remove headers and footers based on common HTML tags or classes
+    # Remove headers and footers based on common HTML tags
     for element in soup.find_all(['header', 'footer']):
         element.decompose()  # Remove these tags and their content
 
@@ -107,18 +66,17 @@ def clean_html(html_content):
 
 
 def html_to_markdown_with_readability(html_content):
-
     
     cleaned_html = clean_html(html_content)  
     
     # Convert to markdown
     markdown_converter = html2text.HTML2Text()
+    # Does not change if you set it to True
     markdown_converter.ignore_links = False
     markdown_content = markdown_converter.handle(cleaned_html)
     
     return markdown_content
 
-# Define the pricing for gpt-4o-mini without Batch API
 pricing = {
     "gpt-4o-mini": {
         "input": 0.150 / 1_000_000,  # $0.150 per 1M input tokens
@@ -132,63 +90,23 @@ pricing = {
 
     # Add other models and their prices here if needed
 }
+ 
+def create_dynamic_listing_model(field_names: List[str]):
 
-model_used="gpt-4o-mini"
-    
-def save_raw_data(raw_data, timestamp, output_folder='output'):
-    # Ensure the output folder exists
-    os.makedirs(output_folder, exist_ok=True)
-    
-    # Save the raw markdown data with timestamp in filename
-    raw_output_path = os.path.join(output_folder, f'rawData_{timestamp}.md')
-    with open(raw_output_path, 'w', encoding='utf-8') as f:
-        f.write(raw_data)
-    print(f"Raw data saved to {raw_output_path}")
-    return raw_output_path
+    #field_name is a list of names of the fields to extract from the markdown.
 
-
-def remove_urls_from_file(file_path):
-    # Regex pattern to find URLs
-    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
-
-    # Construct the new file name
-    base, ext = os.path.splitext(file_path)
-    new_file_path = f"{base}_cleaned{ext}"
-
-    # Read the original markdown content
-    with open(file_path, 'r', encoding='utf-8') as file:
-        markdown_content = file.read()
-
-    # Replace all found URLs with an empty string
-    cleaned_content = re.sub(url_pattern, '', markdown_content)
-
-    # Write the cleaned content to a new file
-    with open(new_file_path, 'w', encoding='utf-8') as file:
-        file.write(cleaned_content)
-    print(f"Cleaned file saved as: {new_file_path}")
-    return cleaned_content
-
-
-def create_dynamic_listing_model(field_names: List[str]) -> Type[BaseModel]:
-    """
-    Dynamically creates a Pydantic model based on provided fields.
-    field_name is a list of names of the fields to extract from the markdown.
-    """
-    # Create field definitions using aliases for Field parameters
-    field_definitions = {field: (str, ...) for field in field_names}
-    # Dynamically create the model with all field
+    field_definitions = {}
+    for field in field_names:
+        field_definitions[field] = (str, ...)
     return create_model('DynamicListingModel', **field_definitions)
 
 
-def create_listings_container_model(listing_model: Type[BaseModel]) -> Type[BaseModel]:
-    """
-    Create a container model that holds a list of the given listing model.
-    """
+def create_listings_container_model(listing_model: Type[BaseModel]):
+    # Create a container model that holds a list of the given listing model.
     return create_model('DynamicListingsContainer', listings=(List[listing_model], ...))
 
 
-
-
+# Amazon is about 40k
 def trim_to_token_limit(text, model, max_tokens=200000):
     encoder = tiktoken.encoding_for_model(model)
     tokens = encoder.encode(text)
@@ -198,9 +116,7 @@ def trim_to_token_limit(text, model, max_tokens=200000):
     return text
 
 def format_data(data, DynamicListingsContainer):
-
-
-
+    
     client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
     system_message = """You are an intelligent text extraction and conversion assistant. Your task is to extract structured information 
@@ -212,7 +128,8 @@ def format_data(data, DynamicListingsContainer):
     user_message = f"Extract the following information from the provided text:\nPage content:\n\n{data}"
 
     completion = client.beta.chat.completions.parse(
-        model=model_used,
+        model="gpt-4o-mini",
+        temperature = 0.1,
         messages=[
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_message},
@@ -221,8 +138,6 @@ def format_data(data, DynamicListingsContainer):
     )
     return completion.choices[0].message.parsed
     
-
-
 
 def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     # Ensure the output folder exists
@@ -246,7 +161,6 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     else:
         raise ValueError("Formatted data is neither a dictionary nor a list, cannot convert to DataFrame")
 
-    # Create DataFrame
     try:
         df = pd.DataFrame(data_for_df)
         print("DataFrame created successfully.")
@@ -261,64 +175,16 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
         print(f"Error creating DataFrame or saving Excel: {str(e)}")
         return None
 
-def calculate_price(input_text, output_text, model=model_used):
-    # Initialize the encoder for the specific model
+def calculate_price(input_text, output_text, model="gpt-4o-mini"):
+    
     encoder = tiktoken.encoding_for_model(model)
     
-    # Encode the input text to get the number of input tokens
     input_token_count = len(encoder.encode(input_text))
     
-    # Encode the output text to get the number of output tokens
     output_token_count = len(encoder.encode(output_text))
     
-    # Calculate the costs
     input_cost = input_token_count * pricing[model]["input"]
     output_cost = output_token_count * pricing[model]["output"]
     total_cost = input_cost + output_cost
     
     return input_token_count, output_token_count, total_cost
-
-
-
-
-if __name__ == "__main__":
-    url = 'https://news.ycombinator.com/'
-    fields=['Title', 'Number of Points', 'Creator', 'Time Posted', 'Number of Comments']
-
-    try:
-        # # Generate timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # Scrape data
-        raw_html = fetch_html_selenium(url)
-    
-        markdown = html_to_markdown_with_readability(raw_html)
-        
-        # Save raw data
-        save_raw_data(markdown, timestamp)
-
-        # Create the dynamic listing model
-        DynamicListingModel = create_dynamic_listing_model(fields)
-
-        # Create the container model that holds a list of the dynamic listing models
-        DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
-        
-        # Format data
-        formatted_data = format_data(markdown, DynamicListingsContainer)  # Use markdown, not raw_html
-        
-        # Save formatted data
-        save_formatted_data(formatted_data, timestamp)
-
-        # Convert formatted_data back to text for token counting
-        formatted_data_text = json.dumps(formatted_data.dict()) 
-        
-        
-        # Automatically calculate the token usage and cost for all input and output
-        input_tokens, output_tokens, total_cost = calculate_price(markdown, formatted_data_text, model=model_used)
-        print(f"Input token count: {input_tokens}")
-        print(f"Output token count: {output_tokens}")
-        print(f"Estimated total cost: ${total_cost:.4f}")
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        
